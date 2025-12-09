@@ -101,10 +101,19 @@ WSGI_APPLICATION = 'hostel_gatepass.wsgi.application'
 # Database configuration - uses DATABASE_URL environment variable
 database_url = os.environ.get("DATABASE_URL", f"sqlite:///{BASE_DIR}/db.sqlite3")
 
-# Update database configuration from DATABASE_URL environment variable
-DATABASES = {
-    'default': dj_database_url.parse(database_url, conn_max_age=600)
-}
+# For Vercel, use SQLite if no DATABASE_URL is provided
+if not os.environ.get("DATABASE_URL"):
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
+else:
+    # Update database configuration from DATABASE_URL environment variable
+    DATABASES = {
+        'default': dj_database_url.parse(database_url, conn_max_age=600)
+    }
 
 
 # Password validation
