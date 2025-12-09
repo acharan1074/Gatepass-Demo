@@ -21,6 +21,8 @@ urlpatterns = [
     path('warden/dashboard/', views.warden_dashboard, name='warden_dashboard'),
     path('security/dashboard/', views.security_dashboard, name='security_dashboard'),
     path('superadmin/dashboard/', views.superadmin_dashboard, name='superadmin_dashboard'),
+    path('export/students/', views.export_students_excel, name='export_students_excel'),
+    path('export/outings/', views.export_outings_excel, name='export_outings_excel'),
     
     # Gatepass URLs
     path('student/gatepass/create/', views.create_gatepass, name='create_gatepass'),

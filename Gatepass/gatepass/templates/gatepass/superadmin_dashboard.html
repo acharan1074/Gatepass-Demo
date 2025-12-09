@@ -250,6 +250,8 @@
             </div>
             <div class="card-body">
                 <div class="d-grid gap-2 d-md-flex">
+                    <a href="{% url 'export_outings_excel' %}" class="btn btn-success"><i class="fas fa-file-excel me-2"></i>Outings Excel</a>
+                    <a href="{% url 'export_students_excel' %}" class="btn btn-outline-success"><i class="fas fa-file-excel me-2"></i>Students Excel</a>
                     <a href="/admin/" class="btn btn-outline-primary"><i class="fas fa-cog me-2"></i>Full Django Admin</a>
                     <a href="{% url 'debug_info' %}" class="btn btn-outline-info"><i class="fas fa-bug me-2"></i>Debug Info</a>
                 </div>

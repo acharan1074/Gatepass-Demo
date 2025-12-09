@@ -2,15 +2,17 @@ from django import forms
 from django.contrib.auth.forms import UserCreationForm
 from django.core.exceptions import ValidationError
 from .models import User, Student, GatePass, ParentVerification
+from .password_validation import validate_password_strength
 from django.utils import timezone
 from datetime import datetime, date
 
 
 class StudentRegistrationForm(forms.ModelForm):
     """Student registration form"""
-    
+
     password1 = forms.CharField(
         label='Password',
+        help_text='Password must contain at least one uppercase letter, one lowercase letter, and one number.',
         widget=forms.PasswordInput(attrs={
             'class': 'form-control',
             'placeholder': 'Enter password',
@@ -83,12 +85,18 @@ class StudentRegistrationForm(forms.ModelForm):
             raise ValidationError("Mobile number already exists")
         return mobile_number
 
+    def clean_password1(self):
+        password1 = self.cleaned_data.get('password1')
+        validate_password_strength(password1)
+        return password1
+
 
 class WardenRegistrationForm(forms.ModelForm):
     """Warden registration form"""
-    
+
     password1 = forms.CharField(
         label='Password',
+        help_text='Password must contain at least one uppercase letter, one lowercase letter, and one number.',
         widget=forms.PasswordInput(attrs={
             'class': 'form-control',
             'placeholder': 'Enter password',
@@ -144,9 +152,10 @@ class SecurityRegistrationForm(forms.ModelForm):
     )
     password1 = forms.CharField(
         label='Password',
+        help_text='Password must contain at least one uppercase letter, one lowercase letter, and one number.',
         widget=forms.PasswordInput(attrs={
             'class': 'form-control',
-            'placeholder': 'Enter password (8+ chars, upper/lower case, number, special char)',
+            'placeholder': 'Enter password',
             'required': 'required'
         })
     )

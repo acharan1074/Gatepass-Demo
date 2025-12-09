@@ -2,14 +2,18 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth import login, authenticate, logout
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
-from django.http import JsonResponse
+from django.http import JsonResponse, HttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.utils import timezone
 from django.db import transaction
+from django.db.models import Count
+from django.db.models.functions import TruncMonth
 from django.contrib.auth.views import LoginView
 import random
 import string
 from datetime import datetime, date, time
+import openpyxl
+from openpyxl.utils import get_column_letter
 from .models import User, Student, Warden, Security, GatePass, ParentVerification, Notification
 from .forms import (
     StudentRegistrationForm, WardenRegistrationForm, SecurityRegistrationForm,
@@ -441,6 +445,228 @@ def create_gatepass(request):
         'form': form,
         'student': student
     })
+
+
+def _auto_size_columns(ws):
+    """Adjust column widths based on cell contents."""
+    for column_cells in ws.columns:
+        # Calculate the maximum length in the column and add some padding
+        length = max(len(str(cell.value)) if cell.value is not None else 0 for cell in column_cells)
+        ws.column_dimensions[get_column_letter(column_cells[0].column)].width = max(length + 2, 12)
+
+
+@login_required
+def export_students_excel(request):
+    """
+    Export student list and currently-out students to Excel.
+    Accessible only to wardens and superadmins.
+    """
+    if request.user.role not in ('warden', 'superadmin'):
+        messages.error(request, 'Access denied.')
+        return redirect('home')
+
+    wb = openpyxl.Workbook()
+
+    # Sheet 1: All students
+    ws_students = wb.active
+    ws_students.title = "Students"
+    student_headers = [
+        "Student Name",
+        "Hall Ticket No",
+        "Room No",
+        "Gender",
+        "Email",
+        "Mobile",
+        "Parent Name",
+        "Parent Mobile",
+        "Approved",
+    ]
+    ws_students.append(student_headers)
+
+    students = Student.objects.select_related('user').order_by('student_name')
+    for student in students:
+        ws_students.append([
+            student.student_name,
+            student.hall_ticket_no,
+            student.room_no,
+            student.user.get_gender_display() if student.user.gender else "",
+            student.user.email or "",
+            student.user.mobile_number or "",
+            student.parent_name,
+            student.parent_mobile,
+            "Yes" if student.user.is_approved else "No",
+        ])
+    _auto_size_columns(ws_students)
+
+    # Sheet 2: Students currently out (security approved)
+    ws_out = wb.create_sheet("Students Out")
+    out_headers = [
+        "Student Name",
+        "Hall Ticket No",
+        "Outing Date",
+        "Outing Time",
+        "Expected Return Date",
+        "Expected Return Time",
+        "Purpose",
+        "Warden Approved By",
+        "Security Approved By",
+    ]
+    ws_out.append(out_headers)
+
+    outing_requests = (
+        GatePass.objects
+        .filter(status='security_approved')
+        .select_related('student', 'student__user', 'warden_approval', 'security_approval')
+        .order_by('-outing_date', '-outing_time')
+    )
+    for request_out in outing_requests:
+        ws_out.append([
+            request_out.student.student_name,
+            request_out.student.hall_ticket_no,
+            request_out.outing_date.strftime('%Y-%m-%d'),
+            request_out.outing_time.strftime('%H:%M') if request_out.outing_time else "",
+            request_out.expected_return_date.strftime('%Y-%m-%d'),
+            request_out.expected_return_time.strftime('%H:%M') if request_out.expected_return_time else "",
+            request_out.purpose or "",
+            request_out.warden_approval.username if request_out.warden_approval else "",
+            request_out.security_approval.username if request_out.security_approval else "",
+        ])
+    ws_out.append([])
+    ws_out.append(["Total students currently out", outing_requests.count()])
+    _auto_size_columns(ws_out)
+
+    filename = f"gatepass_export_{timezone.localdate().isoformat()}.xlsx"
+    response = HttpResponse(
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    wb.save(response)
+    return response
+
+
+@login_required
+def export_outings_excel(request):
+    """
+    Export outing data (respecting the warden filter form) and monthly counts to Excel.
+    Accessible only to wardens and superadmins.
+    Query params supported (same as warden filter):
+      - from_date: YYYY-MM-DD
+      - to_date: YYYY-MM-DD
+      - status_filter: pending|warden_approved|security_approved|returned|completed|warden_rejected
+    Backwards-compatible extras:
+      - year: YYYY
+      - month: 1-12
+    """
+    if request.user.role not in ('warden', 'superadmin'):
+        messages.error(request, 'Access denied.')
+        return redirect('home')
+
+    # Filters from warden dashboard
+    from_date = request.GET.get('from_date')
+    to_date = request.GET.get('to_date')
+    status_filter = request.GET.get('status_filter')
+
+    # Legacy filters kept for compatibility
+    year = request.GET.get('year')
+    month = request.GET.get('month')
+    try:
+        year = int(year) if year else None
+        month = int(month) if month else None
+    except ValueError:
+        year = None
+        month = None
+
+    wb = openpyxl.Workbook()
+
+    # Sheet 1: Outing records (filtered)
+    ws_outings = wb.active
+    ws_outings.title = "Outings"
+    ws_outings.append([
+        "Student Name",
+        "Hall Ticket No",
+        "Outing Date",
+        "Outing Time",
+        "Expected Return Date",
+        "Expected Return Time",
+        "Status",
+        "Purpose",
+        "Warden Approved By",
+        "Security Approved By",
+    ])
+
+    outing_qs = GatePass.objects.select_related(
+        'student', 'student__user', 'warden_approval', 'security_approval'
+    ).filter(status__in=['security_approved', 'returned', 'completed'])
+
+    if from_date:
+        outing_qs = outing_qs.filter(outing_date__gte=from_date)
+    if to_date:
+        outing_qs = outing_qs.filter(outing_date__lte=to_date)
+    if status_filter:
+        outing_qs = outing_qs.filter(status=status_filter)
+    if year:
+        outing_qs = outing_qs.filter(outing_date__year=year)
+    if month:
+        outing_qs = outing_qs.filter(outing_date__month=month)
+
+    outing_qs = outing_qs.order_by('-outing_date', '-outing_time')
+
+    for gp in outing_qs:
+        ws_outings.append([
+            gp.student.student_name,
+            gp.student.hall_ticket_no,
+            gp.outing_date.strftime('%Y-%m-%d'),
+            gp.outing_time.strftime('%H:%M') if gp.outing_time else "",
+            gp.expected_return_date.strftime('%Y-%m-%d'),
+            gp.expected_return_time.strftime('%H:%M') if gp.expected_return_time else "",
+            gp.get_status_display(),
+            gp.purpose or "",
+            gp.warden_approval.username if gp.warden_approval else "",
+            gp.security_approval.username if gp.security_approval else "",
+        ])
+    ws_outings.append([])
+    ws_outings.append(["Total outings in selection", outing_qs.count()])
+    _auto_size_columns(ws_outings)
+
+    # Sheet 2: Monthly counts for the same filtered dataset
+    ws_monthly = wb.create_sheet("Monthly Counts")
+    ws_monthly.append(["Month", "Total Outings"])
+
+    monthly_counts = (
+        outing_qs
+        .annotate(month=TruncMonth('outing_date'))
+        .values('month')
+        .annotate(total=Count('id'))
+        .order_by('month')
+    )
+    grand_total = 0
+    for row in monthly_counts:
+        label = row['month'].strftime('%Y-%m') if row['month'] else "Unknown"
+        ws_monthly.append([label, row['total']])
+        grand_total += row['total']
+    ws_monthly.append([])
+    ws_monthly.append(["Grand total outings", grand_total])
+    _auto_size_columns(ws_monthly)
+
+    filename_parts = ["outings"]
+    if from_date:
+        filename_parts.append(f"from-{from_date}")
+    if to_date:
+        filename_parts.append(f"to-{to_date}")
+    if status_filter:
+        filename_parts.append(status_filter)
+    if year:
+        filename_parts.append(str(year))
+    if month:
+        filename_parts.append(f"{month:02d}")
+    filename = f"gatepass_{'_'.join(filename_parts)}.xlsx"
+
+    response = HttpResponse(
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    wb.save(response)
+    return response
 
 
 @login_required
