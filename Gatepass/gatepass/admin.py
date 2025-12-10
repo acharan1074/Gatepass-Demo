@@ -1,5 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
+from django.db import transaction
+from django.contrib import messages
 from .models import User, Student, Warden, Security, GatePass, ParentVerification, Notification
 
 
@@ -62,6 +64,10 @@ class GatePassAdmin(admin.ModelAdmin):
     list_filter = ('status', 'outing_date', 'student__user__gender')
     search_fields = ('student__student_name', 'student__hall_ticket_no')
     readonly_fields = ('created_at', 'updated_at')
+    actions = ['delete_selected_safe']
+    list_per_page = 50  # Limit items per page to avoid field limit issues
+    list_max_show_all = 100  # Maximum number of items to show when "Show all" is clicked
+    show_full_result_count = False  # Don't count all items (performance)
     
     fieldsets = (
         ('Student Information', {
@@ -78,6 +84,36 @@ class GatePassAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
     )
+    
+    def delete_selected_safe(self, request, queryset):
+        """Custom delete action that handles large querysets without hitting field limits"""
+        count = queryset.count()
+        if count == 0:
+            self.message_user(request, 'No records selected.', messages.WARNING)
+            return
+        
+        try:
+            with transaction.atomic():
+                # Delete related notifications first
+                Notification.objects.filter(gatepass__in=queryset).delete()
+                # Delete related parent verifications
+                ParentVerification.objects.filter(gatepass__in=queryset).delete()
+                # Finally delete gatepasses
+                deleted_count, _ = queryset.delete()
+                
+            self.message_user(
+                request,
+                f'Successfully deleted {deleted_count} gatepass record(s) and related data.',
+                messages.SUCCESS
+            )
+        except Exception as e:
+            self.message_user(
+                request,
+                f'Error deleting records: {str(e)}',
+                messages.ERROR
+            )
+    
+    delete_selected_safe.short_description = "Delete selected gatepasses (handles large selections)"
 
 
 @admin.register(ParentVerification)

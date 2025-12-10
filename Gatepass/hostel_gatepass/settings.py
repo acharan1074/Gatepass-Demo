@@ -30,6 +30,8 @@ ALLOWED_HOSTS = [
     'localhost',
     '127.0.0.1',
     '.onrender.com',
+    '74.220.48.0/24',
+    '74.220.56.0/24',
 ]
 
 if os.environ.get('ALLOWED_HOSTS'):
@@ -180,3 +182,17 @@ REST_FRAMEWORK = {
 
 # during development allow CORS from mobile clients; change in production
 CORS_ALLOW_ALL_ORIGINS = True
+
+# Increase the limit for bulk operations in admin (default is 1000)
+# This allows deleting many records at once without hitting the limit
+# Set to a very high number to handle large bulk deletions
+DATA_UPLOAD_MAX_NUMBER_FIELDS = 50000
+
+# Email settings (default sender)
+DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "no-reply@gmail.com")
+
+# Local email backend (prints to console). Override via env EMAIL_BACKEND for real SMTP.
+EMAIL_BACKEND = os.environ.get(
+    "EMAIL_BACKEND",
+    "django.core.mail.backends.console.EmailBackend"
+)

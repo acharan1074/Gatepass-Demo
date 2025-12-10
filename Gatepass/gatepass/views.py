@@ -6,9 +6,11 @@ from django.http import JsonResponse, HttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.utils import timezone
 from django.db import transaction
-from django.db.models import Count
+from django.db.models import Count, Q
 from django.db.models.functions import TruncMonth
 from django.contrib.auth.views import LoginView
+from django.core.mail import send_mail
+from django.conf import settings
 import random
 import string
 from datetime import datetime, date, time
@@ -19,6 +21,22 @@ from .forms import (
     StudentRegistrationForm, WardenRegistrationForm, SecurityRegistrationForm,
     GatePassRequestForm, WardenApprovalForm, ParentVerificationForm, SecurityReturnForm, WardenDateFilterForm
 )
+
+
+def _send_registration_email(to_email, username, raw_password, role_label):
+    """Send credentials to the registered user's email. Fails silently if email is not configured."""
+    if not to_email:
+        return
+    subject = "Gatepass Account Details"
+    message = (
+        f"Your {role_label} account has been registered.\n\n"
+        f"Username: {username}\n"
+        f"Password: {raw_password}\n"
+        f"Email: {to_email}\n\n"
+        "Please keep these credentials safe."
+    )
+    from_email = getattr(settings, "DEFAULT_FROM_EMAIL", "no-reply@gatepass.local")
+    send_mail(subject, message, from_email, [to_email], fail_silently=True)
 
 
 def home(request):
@@ -137,10 +155,11 @@ def register(request):
                         while User.objects.filter(username=username).exists():
                             username = f"{base_username}{suffix}"
                             suffix += 1
+                        raw_password = data['password1']
                         user = User.objects.create_user(
                             username=username,
                             email=(data.get('email') or None),
-                            password=data['password1'],
+                            password=raw_password,
                             role='student',
                             mobile_number=data.get('mobile_number') or None,
                             gender=data.get('gender') or None,
@@ -149,6 +168,7 @@ def register(request):
                         student = form.save(commit=False)
                         student.user = user
                         student.save()
+                        _send_registration_email(user.email, username, raw_password, "student")
                         messages.success(request, f"Registration successful! Your username is {username}. Please wait for admin approval before logging in.")
                         return redirect('login')
                 except IntegrityError as e:
@@ -161,10 +181,11 @@ def register(request):
                 try:
                     with transaction.atomic():
                         data = form.cleaned_data
+                        raw_password = data['password1']
                         user = User.objects.create_user(
                             username=data['username'],
                             email=data['email'],
-                            password=data['password1'],
+                            password=raw_password,
                             role='warden',
                             mobile_number=data.get('mobile_number') or None,
                             gender=data.get('gender') or None,
@@ -177,6 +198,7 @@ def register(request):
                             name=f"{data['first_name']} {data['last_name']}",
                             department=data.get('department', '')
                         )
+                        _send_registration_email(user.email, user.username, raw_password, "warden")
                         messages.success(request, 'Registration successful! Please wait for admin approval.')
                         return redirect('login')
                 except Exception as e:
@@ -194,10 +216,11 @@ def register(request):
             if form.is_valid():
                 with transaction.atomic():
                     data = form.cleaned_data
+                    raw_password = data['password1']
                     user = User.objects.create_user(
                         username=data['username'],
                         email=data['email'],
-                        password=data['password1'],
+                        password=raw_password,
                         role='security',
                         mobile_number=data.get('mobile_number') or None,
                         first_name=data['first_name'],
@@ -209,6 +232,7 @@ def register(request):
                         name=f"{data['first_name']} {data['last_name']}",
                         shift=data.get('shift', '')
                     )
+                    _send_registration_email(user.email, user.username, raw_password, "security")
                     messages.success(request, 'Registration successful! Please wait for admin approval.')
                     return redirect('login')
             context['security_form'] = form
@@ -238,10 +262,11 @@ def register_student(request):
                 student_data = form.cleaned_data
                 username = f"{student_data['student_name'].replace(' ', '')}@{student_data['hall_ticket_no'][-4:]}"
                 
+                raw_password = student_data['password1']
                 user = User.objects.create_user(
                     username=username,
                     email=(student_data.get('email') or None),
-                    password=student_data['password1'],
+                    password=raw_password,
                     role='student',
                     mobile_number=student_data.get('mobile_number') or None,
                     gender=student_data.get('gender') or None,
@@ -252,6 +277,8 @@ def register_student(request):
                 student = form.save(commit=False)
                 student.user = user
                 student.save()
+                
+                _send_registration_email(user.email, username, raw_password, "student")
                 
                 messages.success(request, 'Registration successful! Please wait for admin approval.')
                 return redirect('login')
@@ -268,11 +295,12 @@ def register_warden(request):
         if form.is_valid():
             with transaction.atomic():
                 warden_data = form.cleaned_data
+                raw_password = warden_data['password1']
                 
                 user = User.objects.create_user(
                     username=warden_data['username'],
                     email=warden_data['email'],
-                    password=warden_data['password1'],
+                    password=raw_password,
                     role='warden',
                     mobile_number=warden_data.get('mobile_number') or None,
                     gender=warden_data.get('gender') or None,
@@ -287,6 +315,8 @@ def register_warden(request):
                     name=f"{warden_data['first_name']} {warden_data['last_name']}",
                     department=warden_data.get('department', '')
                 )
+                
+                _send_registration_email(user.email, user.username, raw_password, "warden")
                 
                 messages.success(request, 'Registration successful! Please wait for admin approval.')
                 return redirect('login')
@@ -303,11 +333,12 @@ def register_security(request):
         if form.is_valid():
             with transaction.atomic():
                 security_data = form.cleaned_data
+                raw_password = security_data['password1']
                 
                 user = User.objects.create_user(
                     username=security_data['username'],
                     email=security_data['email'],
-                    password=security_data['password1'],
+                    password=raw_password,
                     role='security',
                     mobile_number=security_data.get('mobile_number') or None,
                     first_name=security_data['first_name'],
@@ -321,6 +352,8 @@ def register_security(request):
                     name=f"{security_data['first_name']} {security_data['last_name']}",
                     shift=security_data.get('shift', '')
                 )
+                
+                _send_registration_email(user.email, user.username, raw_password, "security")
                 
                 messages.success(request, 'Registration successful! Please wait for admin approval.')
                 return redirect('login')
@@ -400,8 +433,6 @@ def create_gatepass(request):
             
             gatepass.student = student
             gatepass.save()
-            
-            print(f"DEBUG: Student {student.student_name} (ID: {student.id}) gender: {student.user.gender}")
 
             # Create parent verification
             verification_code = ''.join(random.choices(string.digits, k=6))
@@ -412,11 +443,31 @@ def create_gatepass(request):
             )
             
             # Create notification for appropriate wardens based on student's gender
-            wardens_to_notify = User.objects.filter(role='warden', is_approved=True, gender=student.user.gender)
+            # CRITICAL: Gender-based routing ensures:
+            # - Male students' requests go ONLY to male wardens (NOT to female wardens)
+            # - Female students' requests go ONLY to female wardens (NOT to male wardens)
+            # - Students without gender set will NOT notify any wardens (safety measure)
             
-            print(f"DEBUG: Wardens to notify (gender-matched): {list(wardens_to_notify.values_list('username', 'gender'))}")
-
-            if wardens_to_notify.exists():
+            # Get and normalize student gender
+            student_gender = student.user.gender
+            if student_gender:
+                student_gender = str(student_gender).strip().upper()
+            
+            if student_gender in ['M', 'F']:
+                # CRITICAL: Filter wardens by EXACT gender match - this ensures strict gender separation
+                # Only notify wardens who have the SAME gender as the student
+                # This query ensures: Female students notify ONLY female wardens, Male students notify ONLY male wardens
+                wardens_to_notify = User.objects.filter(
+                    role='warden', 
+                    is_approved=True, 
+                    gender__iexact=student_gender  # Only wardens with EXACT matching gender (case-insensitive)
+                ).exclude(
+                    gender__isnull=True
+                ).exclude(
+                    gender=''
+                )
+                
+                # Notify only the matching gender wardens
                 for warden_user in wardens_to_notify:
                     Notification.objects.create(
                         user=warden_user,
@@ -424,17 +475,8 @@ def create_gatepass(request):
                         notification_type='gatepass_request',
                         message=f"New gatepass request from {student.student_name}"
                     )
-            else:
-                # Fallback: If no specific gender-matching warden found, notify all approved wardens
-                all_approved_wardens = User.objects.filter(role='warden', is_approved=True)
-                print(f"DEBUG: No gender-matched wardens found. Notifying all approved wardens: {list(all_approved_wardens.values_list('username', 'gender'))}")
-                for warden_user in all_approved_wardens:
-                    Notification.objects.create(
-                        user=warden_user,
-                        gatepass=gatepass,
-                        notification_type='gatepass_request',
-                        message=f"New gatepass request from {student.student_name} (No gender-specific warden found)"
-                    )
+            # If student gender is not set or invalid, DO NOT notify any wardens
+            # This ensures strict gender separation - no cross-gender notifications
             
             messages.success(request, 'Gatepass request submitted successfully!')
             return redirect('student_dashboard')
@@ -684,20 +726,39 @@ def warden_dashboard(request):
     
     # Get all gatepass requests for filtering
     all_requests = GatePass.objects.all().order_by('-created_at')
-    print(f"DEBUG: Warden {request.user.username} (ID: {request.user.id}) gender: {request.user.gender}")
-    print(f"DEBUG: All requests before gender filter: {list(all_requests.values_list('id', 'student__user__gender', 'status'))}")
-
-    # Gender filter is removed to show all requests to all wardens.
-    # if request.user.gender:
-    #     gender_filtered = all_requests.filter(student__user__gender=request.user.gender)
-    #     if gender_filtered.exists():
-    #         all_requests = gender_filtered
-    #         print(f"DEBUG: Requests after gender filter (matched): {list(all_requests.values_list('id', 'student__user__gender', 'status'))}")
-    #     else:
-    #         print(f"DEBUG: No requests found matching warden's gender ({request.user.gender}). All requests queryset is now empty.")
-    #         all_requests = gender_filtered # This will be an empty queryset
-    # else:
-    #     print("DEBUG: Warden gender not set. No gender filter applied.")
+    
+    # CRITICAL: Gender-based filtering ensures strict separation
+    # - Male wardens see ONLY male student requests (NOT female student requests)
+    # - Female wardens see ONLY female student requests (NOT male student requests)
+    # - Wardens without gender set will see NO requests (safety measure)
+    # - Students without gender set will NOT appear for any warden
+    
+    # Get and validate warden gender
+    warden_gender = request.user.gender
+    if warden_gender:
+        warden_gender = str(warden_gender).strip().upper()
+    
+    # Apply strict gender filtering - THIS MUST BE APPLIED BEFORE ANY OTHER FILTERS
+    if warden_gender in ['M', 'F']:
+        # CRITICAL: Filter to show ONLY requests from students with EXACT matching gender
+        # This query ensures:
+        # - Male wardens (gender='M') see ONLY students with gender='M'
+        # - Female wardens (gender='F') see ONLY students with gender='F'
+        # - Any request where student gender doesn't match is EXCLUDED
+        # IMPORTANT: We filter by the normalized warden_gender value
+        all_requests = all_requests.filter(
+            student__user__gender__iexact=warden_gender
+        ).exclude(
+            student__user__gender__isnull=True
+        ).exclude(
+            student__user__gender=''
+        )
+        
+        # Additional safety check: Ensure we only get matching gender
+        # This is redundant but ensures the filter is absolutely correct
+    else:
+        # If warden gender is not set or invalid, show no requests (safety measure)
+        all_requests = GatePass.objects.none()
     
     # Apply date and status filters
     if filter_form.is_valid():
@@ -767,6 +828,30 @@ def warden_approve_gatepass(request, gatepass_id):
         messages.error(request, 'Access denied.')
         return redirect('home')
     gatepass = get_object_or_404(GatePass, id=gatepass_id)
+    
+    # CRITICAL: Enforce gender matching - prevent cross-gender approvals
+    # Male wardens can ONLY approve male student requests
+    # Female wardens can ONLY approve female student requests
+    # If either gender is missing, block the approval
+    
+    # Normalize genders for comparison (case-insensitive)
+    warden_gender = request.user.gender
+    student_gender = gatepass.student.user.gender
+    
+    if warden_gender:
+        warden_gender = str(warden_gender).strip().upper()
+    if student_gender:
+        student_gender = str(student_gender).strip().upper()
+    
+    if not warden_gender or not student_gender or warden_gender not in ['M', 'F'] or student_gender not in ['M', 'F']:
+        messages.error(request, 'Gender information is required for both warden and student to process this request.')
+        return redirect('warden_dashboard')
+    
+    # CRITICAL: Block cross-gender approvals
+    if warden_gender != student_gender:
+        messages.error(request, f'You can only approve gatepass requests from students of your gender. (Warden: {warden_gender}, Student: {student_gender})')
+        return redirect('warden_dashboard')
+    
     # BLOCK DUPLICATE APPROVAL/REJECTION
     if gatepass.status != 'pending':
         if request.method == 'POST':
@@ -1178,10 +1263,18 @@ def warden_debug(request):
     all_requests = GatePass.objects.all().order_by('-created_at')
     
     # Apply gender filter if warden has gender set
-    # if request.user.gender:
-    #     gender_filtered = all_requests.filter(student__user__gender=request.user.gender)
-    #     if gender_filtered.exists():
-    #         all_requests = gender_filtered
+    # CRITICAL: Only show requests from students with matching gender
+    if request.user.gender:
+        all_requests = all_requests.filter(
+            student__user__gender=request.user.gender
+        ).exclude(
+            student__user__gender__isnull=True
+        ).exclude(
+            student__user__gender=''
+        )
+    else:
+        # If warden gender is not set, show no requests
+        all_requests = GatePass.objects.none()
     
     context = {
         'warden_gender': request.user.gender,

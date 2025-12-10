@@ -143,10 +143,11 @@ class GatePass(models.Model):
     
     def get_appropriate_warden(self):
         """Get warden based on student's gender"""
-        if self.student.user.gender == 'M':
-            return User.objects.filter(role='warden', gender='M').first()
-        elif self.student.user.gender == 'F':
-            return User.objects.filter(role='warden', gender='F').first()
+        gender = (self.student.user.gender or '').strip().upper()
+        if gender == 'M':
+            return User.objects.filter(role='warden', gender__iexact='M').first()
+        elif gender == 'F':
+            return User.objects.filter(role='warden', gender__iexact='F').first()
         return None
 
 

@@ -32,7 +32,22 @@ class GatePassListCreateAPIView(ListCreateAPIView):
         if hasattr(user, 'student_profile'):
             # student's own gatepasses
             return GatePass.objects.filter(student=user.student_profile).order_by('-created_at')
-        # warden/security/superadmin: return all gatepasses
+        elif user.role == 'warden':
+            if user.gender:
+                # CRITICAL: Gender-based filtering - wardens see ONLY requests from students matching their gender
+                # Male wardens see ONLY male student requests, Female wardens see ONLY female student requests
+                # Students without gender set will NOT appear
+                return GatePass.objects.filter(
+                    student__user__gender__iexact=user.gender
+                ).exclude(
+                    student__user__gender__isnull=True
+                ).exclude(
+                    student__user__gender=''
+                ).order_by('-created_at')
+            else:
+                # If warden gender is not set, return empty queryset (safety measure)
+                return GatePass.objects.none()
+        # security/superadmin: return all gatepasses
         return GatePass.objects.all().order_by('-created_at')
 
     def perform_create(self, serializer):
@@ -46,6 +61,23 @@ class WardenApproveAPIView(APIView):
         if user.role != 'warden':
             return Response({'detail': 'Not authorized'}, status=status.HTTP_403_FORBIDDEN)
         gp = get_object_or_404(GatePass, pk=pk)
+        
+        # CRITICAL: Enforce gender matching - prevent cross-gender approvals via API
+        # Male wardens can ONLY approve male student requests
+        # Female wardens can ONLY approve female student requests
+        # If either gender is missing, block the approval
+        if not user.gender or not gp.student.user.gender:
+            return Response(
+                {'detail': 'Gender information is required for both warden and student to process this request.'}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        if user.gender != gp.student.user.gender:
+            return Response(
+                {'detail': 'You can only approve gatepass requests from students of your gender.'}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
         gp.status = 'warden_approved'
         gp.warden_approval = user
         gp.save()
